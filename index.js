@@ -80,16 +80,13 @@ async function sendEpicPost(profile, pairData, bird) {
     const now = Date.now();
     if (now - lastPostTime < postCooldown) {
         console.log("⏳ Cooldown aktiv, warte...");
-        return;
+        return false;
     }
 
-    lastPostTime = now;
-    
     const tokenAddress = profile.tokenAddress;
-    const logoUrl = profile.logoUrl;
-    const description = profile.description || "";
-    const name = profile.name || "";
-    const symbol = profile.symbol || "";
+    
+    // Bild-URL aus verschiedenen Quellen
+    const imageUrl = profile.header || profile.icon || pairData?.info?.imageUrl;
     
     // Zusätzliche Informationen sammeln
     const price = pairData?.priceUsd || bird?.value || "N/A";
@@ -103,8 +100,8 @@ async function sendEpicPost(profile, pairData, bird) {
     let message = `🚀 *Boosted Token Update*\n\n`;
     message += `📍 *Token Address:* \`${tokenAddress}\`\n`;
     message += `💰 *Updated Boost Amount:* ${profile.totalAmount || "N/A"}\n`;
-    message += `📝 *Description:* ${description || 'N/A'}\n`;
-    message += `🔤 *Name:* ${name || 'N/A'} (${symbol || 'N/A'})\n`;
+    message += `📝 *Description:* ${profile.description || 'N/A'}\n`;
+    message += `🔤 *Name:* ${profile.name || 'N/A'} (${profile.symbol || 'N/A'})\n`;
     message += `💵 *Current Price:* $${format(price)}\n`;
     message += `💹 *Price Change (24h):* ${priceChange24h}%\n`;
     message += `📊 *Volume (24h):* $${format(volume24h)}\n`;
@@ -114,78 +111,67 @@ async function sendEpicPost(profile, pairData, bird) {
     
     try {
         // Bild senden, falls verfügbar
-        if (logoUrl) {
-            await bot.sendPhoto(chatId, logoUrl, {
+        if (imageUrl) {
+            await bot.sendPhoto(chatId, imageUrl, {
                 caption: message,
-                parse_mode: 'Markdown'
+                parse_mode: "Markdown",
+                disable_web_page_preview: true
             });
         } else {
-            await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId, message, {
+                parse_mode: "Markdown",
+                disable_web_page_preview: true
+            });
         }
+
+        lastPostTime = now;
         console.log(`✅ Nachricht gesendet für ${tokenAddress}`);
+        return true;
     } catch (error) {
         console.error('❌ Fehler beim Senden:', error.message);
+        return false;
     }
 }
 
 // Haupt-Scan-Funktion
-async function scanSolanaTokens() {
-    try {
-        console.log('🔍 Scanning...');
-        
-        // Daten von verschiedenen Quellen holen
-        const profiles = await getLatestProfiles();
-        const boosts = await getLatestBoosts();
-        
-        // Solana-Token filtern
-        const solanaProfiles = profiles.filter(p => p.chainId === 'solana');
-        const solanaBoosts = boosts.filter(b => b.chainId === 'solana');
-        
-        // Profile verarbeiten
-        for (const profile of solanaProfiles) {
-            const tokenAddress = profile.tokenAddress;
-            
-            if (seen.has(tokenAddress)) continue;
-            seen.add(tokenAddress);
-            
-            // Zusätzliche Daten abrufen
-            const pairData = await getTokenPairs(tokenAddress);
-            const birdData = await getBirdeye(tokenAddress);
-            
-            // Qualitätsfilter
-            const liquidity = pairData?.liquidity?.usd || birdData?.liquidity || 0;
-            const marketCap = pairData?.fdv || 0;
-            
-            if (liquidity > 3000 && marketCap < 300000) {
-                await sendEpicPost(profile, pairData, birdData);
-            }
+async function scan() {
+    console.log(`🔍 Scan started (${new Date().toLocaleTimeString()})`);
+
+    const [profiles, boosts] = await Promise.all([
+        getLatestProfiles(),
+        getLatestBoosts()
+    ]);
+
+    const candidates = [...profiles, ...boosts];
+
+    for (const item of candidates) {
+        if (item.chainId !== "solana") continue;
+        if (seen.has(item.tokenAddress)) continue;
+
+        // Qualitätsfilter: nur interessante Early-Stage Tokens
+        const pairData = await getTokenPairs(item.tokenAddress);
+        if (!pairData) continue;
+
+        // Korrigierter Qualitätsfilter mit richtigen Vergleichsoperatoren
+        const liquidity = pairData.liquidity?.usd || 0;
+        const mc = pairData.marketCap || pairData.fdv || 0;
+
+        if (liquidity < 3000 || mc > 300000) continue; // anpassbar
+
+        seen.add(item.tokenAddress);
+
+        const bird = await getBirdeye(item.tokenAddress);
+
+        const posted = await sendEpicPost(item, pairData, bird);
+        if (posted) {
+            console.log(`✅ Gepostet: ${item.tokenAddress} (${pairData.baseToken?.symbol})`);
+            // Nach einem Post kurz warten – verhindert Spam
+            await new Promise(r => setTimeout(r, 3000));
+            break; // nur 1 pro Scan-Runde
         }
-        
-        // Boosts verarbeiten
-        for (const boost of solanaBoosts) {
-            const tokenAddress = boost.tokenAddress;
-            
-            if (seen.has(tokenAddress)) continue;
-            seen.add(tokenAddress);
-            
-            // Zusätzliche Daten abrufen
-            const pairData = await getTokenPairs(tokenAddress);
-            const birdData = await getBirdeye(tokenAddress);
-            
-            // Qualitätsfilter
-            const liquidity = pairData?.liquidity?.usd || birdData?.liquidity || 0;
-            const marketCap = pairData?.fdv || 0;
-            
-            if (liquidity > 3000 && marketCap < 300000) {
-                await sendEpicPost(boost, pairData, birdData);
-            }
-        }
-    } catch (error) {
-        console.error('❌ Scan-Fehler:', error.message);
     }
 }
 
-// Bot starten
-console.log('🤖 Solana DEX Tracker Bot started...');
-scanSolanaTokens();
-setInterval(scanSolanaTokens, scanInterval);
+console.log("🚀 Solana DEX Tracker Bot gestartet – ruhiger Modus mit Qualitätsfilter");
+scan();
+setInterval(scan, scanInterval);
