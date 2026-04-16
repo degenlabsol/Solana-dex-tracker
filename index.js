@@ -4,7 +4,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
-const interval = parseInt(process.env.SCAN_INTERVAL_MS) || 120000;
+const interval = parseInt(process.env.SCAN_INTERVAL_MS) || 200000;
 
 if (!token || !chatId) {
     console.error("❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in .env");
