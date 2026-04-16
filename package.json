@@ -1,0 +1,14 @@
+{
+  "name": "solana-dex-tracker",
+  "version": "1.0.0",
+  "description": "Telegram bot tracking Solana token boosts via DEX Screener API",
+  "main": "index.js",
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "node-telegram-bot-api": "^0.61.0",
+    "dotenv": "^16.0.3"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
