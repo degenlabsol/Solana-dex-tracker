@@ -2,69 +2,83 @@ require('dotenv').config();
 const fetch = require('node-fetch');
 const TelegramBot = require('node-telegram-bot-api');
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 const chatId = process.env.TELEGRAM_CHAT_ID;
-const interval = parseInt(process.env.SCAN_INTERVAL_MS) || 200000;
+const interval = parseInt(process.env.SCAN_INTERVAL_MS) || 20000;
 
-if (!token || !chatId) {
-    console.error("❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in .env");
-    process.exit(1);
+const seen = new Set();
+
+async function fetchBoosts() {
+    const res = await fetch('https://api.dexscreener.com/token-boosts/latest/v1');
+    return await res.json();
 }
 
-const bot = new TelegramBot(token, { polling: false });
-const boostTracker = {};
+async function fetchTokenData(address) {
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${address}`);
+    return await res.json();
+}
 
-async function sendTelegramMessage(message) {
+function formatNumber(num) {
+    if (!num) return "0";
+    if (num >= 1e6) return (num / 1e6).toFixed(1) + "M";
+    if (num >= 1e3) return (num / 1e3).toFixed(1) + "K";
+    return num.toFixed(2);
+}
+
+async function sendMessage(msg) {
     try {
-        await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-        console.log('✅ Message sent');
-    } catch (error) {
-        if (error.response && error.response.statusCode === 429) {
-            const retryAfter = (error.response.body.parameters.retry_after || 5) * 1000;
-            console.warn(`⚠️ Rate limited. Retrying in ${retryAfter/1000}s`);
-            setTimeout(() => sendTelegramMessage(message), retryAfter);
-        } else {
-            console.error('❌ Telegram Error:', error.message);
-        }
+        await bot.sendMessage(chatId, msg, {
+            parse_mode: "Markdown",
+            disable_web_page_preview: true
+        });
+    } catch (e) {
+        console.log("Telegram error:", e.message);
     }
 }
 
-async function scanSolanaTokens() {
-    const url = 'https://api.dexscreener.com/token-boosts/latest/v1';
+async function scan() {
+    console.log("🔍 scanning...");
+    const boosts = await fetchBoosts();
 
-    try {
-        console.log('🔍 Scanning...');
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const sol = boosts.filter(t => t.chainId === "solana");
 
-        const data = await res.json();
-        if (!Array.isArray(data)) return;
+    for (let t of sol) {
+        if (seen.has(t.tokenAddress)) continue;
+        seen.add(t.tokenAddress);
 
-        const solanaTokens = data.filter(t => t.chainId === 'solana');
+        const tokenData = await fetchTokenData(t.tokenAddress);
+        if (!tokenData || !tokenData[0]) continue;
 
-        for (const token of solanaTokens) {
-            const { tokenAddress, totalAmount, description, url } = token;
+        const pair = tokenData[0];
 
-            if (!boostTracker[tokenAddress] || totalAmount > boostTracker[tokenAddress]) {
-                const isNew = !boostTracker[tokenAddress];
-                boostTracker[tokenAddress] = totalAmount;
+        const name = pair.baseToken.name;
+        const symbol = pair.baseToken.symbol;
+        const price = parseFloat(pair.priceUsd);
+        const mc = pair.marketCap;
+        const vol = pair.volume.h24;
+        const liquidity = pair.liquidity.usd;
+        const change1h = pair.priceChange.h1;
 
-                const header = isNew ? "🚀 *New Solana Boost*" : "🔥 *Boost Update*";
+        const message = `
+🚀 *${name}* ($${symbol})
+\`${t.tokenAddress}\`
 
-                const message = `${header}\n\n` +
-                    `📍 *Address:* \`${tokenAddress}\`\n` +
-                    `💰 *Total Boost:* ${totalAmount}\n` +
-                    `📝 *Description:* ${description || 'N/A'}\n\n` +
-                    `🔗 [View on DEX Screener](${url})`;
+📊 *Stats*
+├ Price: $${price.toFixed(6)}
+├ MC: $${formatNumber(mc)}
+├ Vol: $${formatNumber(vol)}
+├ LP: $${formatNumber(liquidity)}
+└ 1H: ${change1h}%
 
-                await sendTelegramMessage(message);
-            }
-        }
-    } catch (err) {
-        console.error('❌ API Error:', err.message);
+🔥 *Boost:* ${t.totalAmount}
+
+🔗 [DEX Screener](${pair.url})
+        `;
+
+        await sendMessage(message);
     }
 }
 
-console.log('🤖 Bot started...');
-scanSolanaTokens();
-setInterval(scanSolanaTokens, interval);
+console.log("🤖 Bot running...");
+scan();
+setInterval(scan, interval);
