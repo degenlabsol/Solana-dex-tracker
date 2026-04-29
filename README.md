@@ -1,4 +1,4 @@
-# Solana DEX Tracker Bot v2 (Pipeline & Image Edition)
+# Solana DEX Tracker Bot v2 
 
 A high-performance Telegram bot that discovers new Solana tokens on DexScreener and posts detailed reports including token images, real-time stats, and quick-trade links.
 
