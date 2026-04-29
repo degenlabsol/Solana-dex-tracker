@@ -5,7 +5,7 @@ const fetch = require('node-fetch');
 const TelegramBot = require('node-telegram-bot-api');
 
 // =====================================================
-// Konfiguration
+// Configuration
 // =====================================================
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -20,7 +20,7 @@ const SVS_API_KEY = process.env.SVS_API_KEY || '';
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || '';
 
 if (!BOT_TOKEN || !CHAT_ID) {
-    console.error('❌ FEHLENDE ENV-VARIABLEN! Bitte TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID in .env setzen.');
+    console.error('❌ MISSING ENV VARIABLES! Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.');
     process.exit(1);
 }
 
@@ -30,7 +30,7 @@ let lastPostTime = 0;
 
 process.on('uncaughtException', (e) => console.error('Uncaught:', e.message));
 process.on('unhandledRejection', (e) => console.error('Unhandled:', e?.message || e));
-process.on('SIGINT', () => { console.log('\n👋 Bot wird beendet...'); process.exit(0); });
+process.on('SIGINT', () => { console.log('\n👋 Bot is shutting down...'); process.exit(0); });
 
 function rememberSeen(addr) {
     seen.add(addr);
@@ -41,7 +41,7 @@ function rememberSeen(addr) {
 }
 
 // =====================================================
-// Hilfsfunktionen
+// Helper Functions
 // =====================================================
 function fmt(num) {
     if (num === null || num === undefined || num === 'N/A' || isNaN(Number(num))) return 'N/A';
@@ -77,23 +77,23 @@ function ageFromMs(ms) {
     return `${d}d`;
 }
 
-// Markdown V1: nur _ * ` [ escapen – aber ALLE Vorkommen
+// Markdown V1: escape only _ * ` [ - but ALL occurrences
 function escapeMd(text) {
     if (text === null || text === undefined) return '';
     return String(text).replace(/([_*`\[\]])/g, '\\$1');
 }
 
-// Für plain-text Felder die in Markdown-Kontext landen (z.B. in code-spans oder Links)
+// For plain-text fields that land in a Markdown context (e.g. in code-spans or links)
 function safeText(text) {
     if (text === null || text === undefined) return '';
-    // Entferne oder ersetze Zeichen die Telegram Markdown verwirren
+    // Remove or replace characters that confuse Telegram Markdown
     return String(text)
         .replace(/\\/g, '')
         .replace(/([_*`\[\]])/g, '\\$1');
 }
 
 // =====================================================
-// API-Calls mit Timeout & Retry
+// API Calls with Timeout & Retry
 // =====================================================
 async function safeFetch(url, opts = {}, timeoutMs = 10000) {
     const ctrl = new AbortController();
@@ -179,7 +179,7 @@ async function birdeye(tokenAddress) {
 }
 
 // =====================================================
-// Audit-Logik
+// Audit Logic
 // =====================================================
 function buildAudit(pair, gtInfo) {
     const flags = [];
@@ -216,17 +216,17 @@ function buildAudit(pair, gtInfo) {
 }
 
 // =====================================================
-// Nachricht bauen – KEIN Output-Change, nur Escaping fix
+// Build message – NO output change, just escaping fix
 // =====================================================
 function buildMessage({ profile, pair, gt, gtInfo, svs }) {
     const tokenAddress = profile.tokenAddress;
     const base = pair?.baseToken || {};
 
-    // Rohdaten (unescaped) für Berechnungen
+    // Raw data (unescaped) for calculations
     const rawName = base.name || gt?.name || profile.name || 'Unknown';
     const rawSymbol = base.symbol || gt?.symbol || 'N/A';
 
-    // Escaped für Markdown
+    // Escaped for Markdown
     const name = escapeMd(rawName);
     const symbol = escapeMd(rawSymbol);
 
@@ -274,7 +274,7 @@ function buildMessage({ profile, pair, gt, gtInfo, svs }) {
 
     const audit = buildAudit(pair, gtInfo);
 
-    // ===== Nachricht =====
+    // ===== Message =====
     let m = '';
     m += `🚀 *${name}* ($${symbol})${profile.totalAmount ? ' 🟣💊' : ''}\n`;
     m += `🌱 Age: ${age}   👀 Boosts: ${profile.totalAmount || profile.amount || 0}\n\n`;
@@ -319,7 +319,7 @@ function buildMessage({ profile, pair, gt, gtInfo, svs }) {
     if (audit.flags.length > 0) {
         m += audit.flags.join('\n') + '\n';
     } else {
-        m += `Keine Audit\\-Daten verfügbar\n`;
+        m += `No audit data available\n`;
     }
 
     m += `\n📊 *Charts*\n`;
@@ -354,7 +354,7 @@ function buildMessage({ profile, pair, gt, gtInfo, svs }) {
 }
 
 // =====================================================
-// Senden mit robustem Fallback
+// Send with robust fallback
 // =====================================================
 async function sendPost(profile, pair, gt, gtInfo, svs) {
     const now = Date.now();
@@ -367,46 +367,46 @@ async function sendPost(profile, pair, gt, gtInfo, svs) {
     try {
         message = buildMessage({ profile, pair, gt, gtInfo, svs });
     } catch (buildErr) {
-        console.error('❌ buildMessage Fehler:', buildErr.message);
+        console.error('❌ buildMessage Error:', buildErr.message);
         return false;
     }
 
     const imageUrl = profile.header || profile.icon || pair?.info?.imageUrl || gtInfo?.image_url;
     const opts = { parse_mode: 'Markdown', disable_web_page_preview: true };
 
-    // Versuch 1: Mit Bild
+    // Attempt 1: With Image
     if (imageUrl) {
         try {
             await bot.sendPhoto(CHAT_ID, imageUrl, { caption: message, ...opts });
             lastPostTime = Date.now();
             return true;
         } catch (e) {
-            console.log(`⚠️ Foto-Fehler (${e.message}), versuche ohne Bild...`);
+            console.log(`⚠️ Photo Error (${e.message}), trying without image...`);
         }
     }
 
-    // Versuch 2: Nur Text mit Markdown
+    // Attempt 2: Only Text with Markdown
     try {
         await bot.sendMessage(CHAT_ID, message, opts);
         lastPostTime = Date.now();
         return true;
     } catch (e) {
-        // Versuch 3: Ohne Markdown (Plain-Text Fallback)
-        console.log(`⚠️ Markdown-Fehler (${e.message}), sende als plain text...`);
+        // Attempt 3: Without Markdown (Plain-Text Fallback)
+        console.log(`⚠️ Markdown Error (${e.message}), sending as plain text...`);
         try {
             const plainMsg = message.replace(/[*_`\[\]]/g, '').replace(/\\/g, '');
             await bot.sendMessage(CHAT_ID, plainMsg, { disable_web_page_preview: true });
             lastPostTime = Date.now();
             return true;
         } catch (e2) {
-            console.error('❌ Telegram-Fehler (alle Versuche):', e2.message);
+            console.error('❌ Telegram Error (all attempts):', e2.message);
             return false;
         }
     }
 }
 
 // =====================================================
-// Scan – kein Filter, alle Solana Boost-Token posten
+// Scan – no filter, post all Solana Boost tokens
 // =====================================================
 async function scan() {
     const ts = new Date().toLocaleTimeString();
@@ -432,11 +432,11 @@ async function scan() {
 
         const pair = await dsTokenPairs(item.tokenAddress);
         if (!pair) {
-            console.log(`   (kein Pair für ${item.tokenAddress})`);
+            console.log(`   (no pair for ${item.tokenAddress})`);
             continue;
         }
 
-        // Optionale Filter aus .env – wenn 0 dann kein Filter
+        // Optional filters from .env – if 0 then no filter
         const liq = pair.liquidity?.usd || 0;
         const mc = pair.marketCap || pair.fdv || 0;
         if (MIN_LIQUIDITY > 0 && liq < MIN_LIQUIDITY) continue;
@@ -456,27 +456,28 @@ async function scan() {
         const ok = await sendPost(item, pair, gt, gtInfo, svs);
         if (ok) {
             posted++;
-            console.log(`✅ Posted Detail-View (Bild: ${!!(item.header || item.icon || pair?.info?.imageUrl || gtInfo?.image_url)}): ${pair.baseToken?.symbol || item.tokenAddress}`);
+            console.log(`✅ Posted Detail-View (Image: ${!!(item.header || item.icon || pair?.info?.imageUrl || gtInfo?.image_url)}): ${pair.baseToken?.symbol || item.tokenAddress}`);
             await new Promise(r => setTimeout(r, 2000));
             if (posted >= 3) break;
         }
     }
 
-    if (posted === 0) console.log('   (keine neuen Token in diesem Scan)');
+    if (posted === 0) console.log('   (no new tokens in this scan)');
 }
 
 // =====================================================
 // Start
 // =====================================================
-console.log('🚀 Solana DEX Tracker Bot gestartet');
-console.log(`   Scan-Intervall:  ${SCAN_INTERVAL}ms`);
-console.log(`   Min. Liquidität: ${MIN_LIQUIDITY > 0 ? '$' + MIN_LIQUIDITY : 'kein Filter'}`);
-console.log(`   Max. Marketcap:  ${MAX_MARKETCAP > 0 ? '$' + MAX_MARKETCAP : 'kein Filter'}`);
+console.log('🚀 Solana DEX Tracker Bot started');
+console.log(`   Scan Interval:  ${SCAN_INTERVAL}ms`);
+console.log(`   Min. Liquidity: ${MIN_LIQUIDITY > 0 ? '$' + MIN_LIQUIDITY : 'no filter'}`);
+console.log(`   Max. Marketcap:  ${MAX_MARKETCAP > 0 ? '$' + MAX_MARKETCAP : 'no filter'}`);
 console.log(`   GeckoTerminal:   on`);
-console.log(`   Solana Vibe:     ${SVS_API_KEY ? 'on' : 'off (kein API-Key)'}`);
-console.log(`   Birdeye:         ${BIRDEYE_API_KEY ? 'on' : 'off (kein API-Key)'}`);
+console.log(`   Solana Vibe:     ${SVS_API_KEY ? 'on' : 'off (no API key)'}`);
+console.log(`   Birdeye:         ${BIRDEYE_API_KEY ? 'on' : 'off (no API key)'}`);
 
-scan().catch(e => console.error('Scan-Fehler:', e.message));
+scan().catch(e => console.error('Scan Error:', e.message));
 setInterval(() => {
-    scan().catch(e => console.error('Scan-Fehler:', e.message));
+    scan().catch(e => console.error('Scan Error:', e.message));
 }, SCAN_INTERVAL);
+            
